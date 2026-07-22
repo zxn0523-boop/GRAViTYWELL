@@ -1,4 +1,4 @@
-from app.models import ExtractionResult, MeetingRequirements
+from app.models import ExtractionResult, MeetingMode, MeetingRequirements
 
 
 def merge_requirements(
@@ -95,6 +95,8 @@ def next_missing_question(requirements: MeetingRequirements) -> str | None:
         return "这次一共有谁参加？请告诉我至少两个人分别从哪里出发。"
     if participant_count > 4:
         return "第一版一次支持 2～4 人，请先选出这次需要一起计算的四个人。"
+    if requirements.mode == MeetingMode.INTERCITY and participant_count != 2:
+        return "邻城模式第一版先支持两个人，请告诉我两个人分别从哪里出发。"
     if any(not participant.origin_text.strip() for participant in requirements.participants):
         return "还有人的出发地不明确，请补充一个附近地标、车站或商圈。"
     if requirements.meeting_time is None:

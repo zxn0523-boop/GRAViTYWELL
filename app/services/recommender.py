@@ -24,7 +24,11 @@ class RecommendationService:
         match_groups = await asyncio.gather(
             *(self.amap.origin_candidates(participant.origin_text) for participant in updated.participants)
         )
-        selected = choose_origin_combination(updated.participants, match_groups)
+        selected = choose_origin_combination(
+            updated.participants,
+            match_groups,
+            prefer_same_city=None,
+        )
         for participant, best in zip(updated.participants, selected, strict=True):
             participant.longitude = best.longitude
             participant.latitude = best.latitude
@@ -281,11 +285,21 @@ MAJOR_CITY_BONUS = {
 def choose_origin_combination(
     participants: list[Participant],
     match_groups: list[list],
+    prefer_same_city: bool | None = True,
 ) -> tuple:
     """Prefer combinations that are mutually city-consistent, without making it a hard rule."""
 
     if any(not group for group in match_groups):
         raise RecommendationError("至少有一个出发地没有可确认的地图结果")
+
+    if prefer_same_city is None:
+        explicit_cities: set[str] = set()
+        for participant, group in zip(participants, match_groups, strict=True):
+            for item in group:
+                city = (item.city or "").removesuffix("市")
+                if city and city in participant.origin_text:
+                    explicit_cities.add(city)
+        prefer_same_city = len(explicit_cities) < 2
 
     def combination_score(combination: tuple) -> float:
         score = 0.0
@@ -300,7 +314,11 @@ def choose_origin_combination(
                 score += 10
         for index, city in enumerate(cities):
             for other_city in cities[index + 1:]:
-                if city and city == other_city:
+                if not city or not other_city:
+                    continue
+                if prefer_same_city and city == other_city:
+                    score += 12
+                if not prefer_same_city and city != other_city:
                     score += 12
         return score
 

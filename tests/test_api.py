@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.models import CandidatePlace, RouteExperience
+from app.models import CandidatePlace, ChatRequest, MeetingMode, RouteExperience
 
 
 def test_health_and_static_page() -> None:
@@ -11,7 +11,13 @@ def test_health_and_static_page() -> None:
         assert health.json() == {"status": "ok"}
         assert page.status_code == 200
         assert "推荐逻辑测试" in page.text
+        assert "邻城碰面" in page.text
         assert "DEEPSEEK_API_KEY" not in page.text
+
+
+def test_new_chat_defaults_to_automatic_mode_detection() -> None:
+    request = ChatRequest(message="测试")
+    assert request.mode == MeetingMode.AUTO
 
 
 def test_accept_deletes_the_entire_session() -> None:

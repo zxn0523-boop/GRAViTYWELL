@@ -15,17 +15,27 @@ h1 { margin: 2px 0; font-size: 25px; }
 header p { margin: 0; color: #666; font-size: 13px; }
 .tag { color: #56733d; font-weight: 700; letter-spacing: .08em; }
 .secondary { padding: 8px 11px; border: 1px solid #bbb; border-radius: 8px; background: white; }
+.mode-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; padding: 4px; border-radius: 11px; background: #eef0ea; }
+.mode-button { padding: 9px; border: 0; border-radius: 8px; background: transparent; color: #68705f; font-weight: 700; }
+.mode-button.active { background: white; color: #405335; box-shadow: 0 1px 5px #0001; }
+.mode-help { margin: 8px 2px 0; color: #74796f; font-size: 12px; }
 .timing-status { margin: 14px 0 0; padding: 8px 10px; border-radius: 8px; background: #f4f7ef; color: #56733d; font-size: 12px; }
 .messages { padding: 18px 0; }
-.message { max-width: 88%; margin: 0 0 16px; }
+.message { max-width: 88%; margin: 0 0 16px; animation: message-enter .28s cubic-bezier(.22,.8,.32,1) both; }
 .message b { display: block; margin-bottom: 5px; font-size: 12px; color: #56733d; }
 .message p { margin: 0; padding: 12px 14px; border-radius: 4px 14px 14px; background: #edf1e9; line-height: 1.65; white-space: pre-wrap; }
 .message.user { margin-left: auto; }
 .message.user b { color: #666; text-align: right; }
 .message.user p { color: white; background: #3f4f36; border-radius: 14px 4px 14px 14px; }
 .timings { display: block; margin-top: 8px; color: #6b7280; font-size: 12px; line-height: 1.5; }
+.thinking-message p { display: flex; align-items: center; gap: 8px; color: #5f6958; }
+.thinking-dots { display: inline-flex; gap: 4px; align-items: center; min-width: 28px; }
+.thinking-dots i { width: 5px; height: 5px; border-radius: 50%; background: #718365; animation: thinking-dot 1.05s ease-in-out infinite; }
+.thinking-dots i:nth-child(2) { animation-delay: .14s; }
+.thinking-dots i:nth-child(3) { animation-delay: .28s; }
+.thinking-message.thinking-exit { animation: thinking-exit .16s ease forwards; }
 .message.with-candidates { width: 100%; max-width: 100%; }
-.candidate-round { display: grid; gap: 12px; margin-top: 14px; padding: 12px; border: 1px solid #dce2d6; border-radius: 12px; background: #fafbf8; }
+.candidate-round { display: grid; gap: 12px; margin-top: 14px; padding: 12px; border: 1px solid #dce2d6; border-radius: 12px; background: #fafbf8; animation: result-enter .38s cubic-bezier(.22,.8,.32,1) both; }
 .round-heading { margin: 0; color: #56733d; font-size: 14px; }
 .candidate { padding: 15px; border: 1px solid #cad3c2; border-radius: 12px; }
 .candidate h2 { margin: 0 0 4px; font-size: 17px; }
@@ -38,6 +48,7 @@ header p { margin: 0; color: #666; font-size: 13px; }
 .reason, .warning { margin: 8px 0 0; font-size: 13px; line-height: 1.55; }
 .weather { margin: 8px 0; color: #49623a; font-size: 13px; }
 .opening { margin: 8px 0; color: #4d5a43; font-size: 12px; }
+.gateway { margin: 9px 0; padding: 8px 10px; border-left: 3px solid #78915e; background: #f4f7ef; color: #405335; font-size: 12px; }
 .warning { color: #9b5b22; }
 .accept { width: 100%; margin-top: 12px; padding: 9px; border: 0; border-radius: 8px; background: #d9ef7f; color: #263019; font-weight: 700; }
 .accept:disabled { background: #e5e7e1; color: #7a7e74; cursor: default; }
@@ -47,3 +58,29 @@ textarea { flex: 1; min-width: 0; resize: none; border: 0; outline: 0; line-heig
 .composer button:disabled { opacity: .45; }
 .notice { position: fixed; bottom: 3px; left: 0; width: 100%; margin: 0; color: #888; font-size: 10px; text-align: center; }
 @media (min-width: 720px) { .app-shell { padding-inline: 28px; } }
+
+@keyframes message-enter {
+  from { opacity: 0; transform: translateY(7px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes result-enter {
+  from { opacity: 0; transform: translateY(10px) scale(.995); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes thinking-dot {
+  0%, 60%, 100% { opacity: .35; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-3px); }
+}
+
+@keyframes thinking-exit {
+  to { opacity: 0; transform: translateY(-3px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .message, .candidate-round, .thinking-dots i, .thinking-message.thinking-exit {
+    animation: none;
+  }
+  * { scroll-behavior: auto !important; }
+}

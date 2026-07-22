@@ -12,7 +12,7 @@ from app.models import (
     PoiPlace,
 )
 from app.core.venue import infer_place_kind, search_terms_for_requirements, venue_fit_score
-from app.services.recommender import choose_origin_combination, choose_preferred_area, generate_search_seeds
+from app.services.recommender import RecommendationService, choose_origin_combination, choose_preferred_area, generate_search_seeds
 
 
 def requirements() -> MeetingRequirements:
@@ -81,6 +81,35 @@ def test_same_city_landmark_combination_is_preferred() -> None:
     ]
     selected = choose_origin_combination(participants, groups)
     assert selected[0].formatted_address == "上海市静安区静安寺"
+
+    auto_selected = choose_origin_combination(participants, groups, prefer_same_city=None)
+    assert auto_selected[0].formatted_address == "上海市静安区静安寺"
+
+
+async def test_manual_intercity_expectation_never_distorts_geocoding() -> None:
+    groups = {
+        "静安寺": [
+            GeocodedOrigin(query="静安寺", formatted_address="湖北省某地静安寺", longitude=112.0, latitude=30.0, city="荆州市"),
+            GeocodedOrigin(query="静安寺", formatted_address="上海市静安区静安寺", longitude=121.44, latitude=31.22, city="上海市"),
+        ],
+        "松江大学城": [
+            GeocodedOrigin(query="松江大学城", formatted_address="上海市松江区松江大学城", longitude=121.23, latitude=31.05, city="上海市"),
+        ],
+    }
+
+    class FakeAmap:
+        async def origin_candidates(self, query: str, preferred_city=None):
+            return groups[query]
+
+    req = MeetingRequirements(
+        mode="intercity",
+        participants=[
+            Participant(name="我", origin_text="静安寺"),
+            Participant(name="小李", origin_text="松江大学城"),
+        ],
+    )
+    resolved = await RecommendationService(FakeAmap()).resolve_origins(req)
+    assert [item.city for item in resolved.participants] == ["上海市", "上海市"]
 
 
 def test_favor_person_changes_the_ranking() -> None:
@@ -222,3 +251,25 @@ def test_preferred_area_uses_participants_city_for_ambiguous_name() -> None:
     ]
     selected = choose_preferred_area(matches, ["北京市", "北京市"])
     assert selected.city == "北京市"
+
+
+def test_intercity_origin_resolution_prefers_two_explicit_cities() -> None:
+    participants = [
+        Participant(name="我", origin_text="上海徐汇"),
+        Participant(name="小王", origin_text="苏州园区"),
+    ]
+    groups = [
+        [
+            GeocodedOrigin(query="上海徐汇", formatted_address="上海市徐汇区", longitude=121.4, latitude=31.2, city="上海市"),
+            GeocodedOrigin(query="上海徐汇", formatted_address="苏州市徐汇路", longitude=120.6, latitude=31.3, city="苏州市"),
+        ],
+        [
+            GeocodedOrigin(query="苏州园区", formatted_address="上海市某园区", longitude=121.5, latitude=31.2, city="上海市"),
+            GeocodedOrigin(query="苏州园区", formatted_address="苏州市工业园区", longitude=120.7, latitude=31.3, city="苏州市"),
+        ],
+    ]
+    selected = choose_origin_combination(participants, groups, prefer_same_city=False)
+    assert [item.city for item in selected] == ["上海市", "苏州市"]
+
+    auto_selected = choose_origin_combination(participants, groups, prefer_same_city=None)
+    assert [item.city for item in auto_selected] == ["上海市", "苏州市"]

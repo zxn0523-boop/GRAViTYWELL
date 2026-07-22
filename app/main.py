@@ -10,6 +10,7 @@ from app.repositories.sessions import SessionRepository
 from app.services.amap import AmapService
 from app.services.deepseek import DeepSeekError, DeepSeekService
 from app.services.orchestrator import ConversationOrchestrator
+from app.services.intercity import IntercityRecommendationService
 from app.services.recommender import RecommendationError, RecommendationService
 
 
@@ -32,6 +33,7 @@ async def lifespan(app: FastAPI):
         repository,
         deepseek,
         RecommendationService(amap),
+        IntercityRecommendationService(amap),
     )
     yield
     await deepseek.close()
@@ -75,7 +77,11 @@ async def create_session(request: Request) -> CreateSessionResponse:
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(payload: ChatRequest, request: Request) -> ChatResponse:
     try:
-        return await request.app.state.orchestrator.chat(payload.session_id, payload.message)
+        return await request.app.state.orchestrator.chat(
+            payload.session_id,
+            payload.message,
+            payload.mode,
+        )
     except (DeepSeekError, RecommendationError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
@@ -100,6 +106,7 @@ async def accept_recommendation(session_id: str, request: Request) -> ChatRespon
     return ChatResponse(
         session_id=None,
         phase="completed",
+        mode=state.requirements.mode,
         reply="本次方案已采纳。出发地、对话和推荐结果均已清除。",
         cleared=True,
     )

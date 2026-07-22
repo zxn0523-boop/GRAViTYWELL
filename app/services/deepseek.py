@@ -27,9 +27,10 @@ EXTRACTION_SYSTEM_PROMPT = """
 3. 相对日期转为 +08:00 ISO 8601。模糊时段默认：凌晨01:00、早上09:00、上午10:00、中午12:00、下午14:00、傍晚18:00、晚上19:00、夜间20:00，不追问几点。
 4. search_keywords 给 1～3 个高德可搜索的具体品类词，不写形容词。明确场所类型不可被氛围替换，例如咖啡馆不能改成艺术馆。
 5. “照顾某人/离某人近些”：priority=favor_person，并填写 favored_participant。
-6. “在某地附近/靠近某商圈或车站”：preferred_area_text 只填目标地名，priority=location_first；这不同于照顾参与者。
+6. “在某地附近/靠近某商圈或车站/明确去某座城市见面”：preferred_area_text 只填目标地名，priority=location_first；这不同于照顾参与者。
 7. intent 只允许 update、confirm_origins、accept、restart。未知信息填 null，不猜地址、时间、交通方式。
 8. “第一个/第二个”必须按候选序号理解。question 仅在缺关键信息时填写，且只问一个问题。
+9. mode=intercity 表示邻城模式，但你仍只抽取需求；不要自行选择见面城市或中间城市。
 返回字段：intent, participants, meeting_time, meeting_time_text, activity, atmosphere, constraints, search_keywords, priority, favored_participant, preferred_area_text, question。
 """.strip()
 
@@ -72,6 +73,7 @@ class DeepSeekService:
             if not (item.role == "user" and item.content == user_message)
         ][-6:]
         compact_current = {
+            "mode": current.mode,
             "participants": [
                 {
                     "name": item.name,
@@ -95,6 +97,8 @@ class DeepSeekService:
                 "index": index,
                 "poi_id": item.poi_id,
                 "name": item.name,
+                "meeting_city": item.meeting_city,
+                "gateway_name": item.gateway_name,
                 "routes": [
                     {
                         "participant": route.participant_name,
@@ -182,6 +186,9 @@ class DeepSeekService:
                 "routes": [route.model_dump() for route in candidate.routes],
                 "weather": candidate.weather.model_dump() if candidate.weather else None,
                 "warnings": candidate.warnings,
+                "meeting_city": candidate.meeting_city,
+                "gateway_name": candidate.gateway_name,
+                "intercity_note": candidate.intercity_note,
             }
             for candidate in candidates
         ]
@@ -219,6 +226,11 @@ class DeepSeekService:
             content = response.json()["choices"][0]["message"]["content"]
             return RecommendationNarrative.model_validate_json(content)
         except (httpx.HTTPError, KeyError, IndexError, ValueError, ValidationError):
+            if requirements.mode.value == "intercity":
+                return RecommendationNarrative(
+                    intro="已分别比较双方所在城市，并按门到门耗时、换乘、场所匹配和天气完成排序。",
+                    explanations=[],
+                )
             return RecommendationNarrative(
                 intro="已按需求匹配、交通公平、整体便利、换乘和天气完成排序。",
                 explanations=[],

@@ -10,10 +10,17 @@ class TransportMode(StrEnum):
     DRIVING = "driving"
 
 
+class MeetingMode(StrEnum):
+    AUTO = "auto"
+    SAME_CITY = "same_city"
+    INTERCITY = "intercity"
+
+
 class SessionPhase(StrEnum):
     COLLECTING = "collecting"
     CONFIRMING_ORIGINS = "confirming_origins"
     READY = "ready"
+    COMPARING_CITIES = "comparing_cities"
     RECOMMENDED = "recommended"
 
 
@@ -30,6 +37,7 @@ class Participant(BaseModel):
 
 
 class MeetingRequirements(BaseModel):
+    mode: MeetingMode = MeetingMode.SAME_CITY
     participants: list[Participant] = Field(default_factory=list, max_length=4)
     meeting_time: datetime | None = None
     meeting_time_text: str | None = None
@@ -93,6 +101,9 @@ class CandidatePlace(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     weather: "WeatherSummary | None" = None
     recommendation_reason: str | None = None
+    meeting_city: str | None = None
+    gateway_name: str | None = None
+    intercity_note: str | None = None
 
 
 class GeocodedOrigin(BaseModel):
@@ -139,18 +150,22 @@ class SessionState(BaseModel):
     history: list[ConversationMessage] = Field(default_factory=list)
     candidates: list[CandidatePlace] = Field(default_factory=list)
     origins_confirmed: bool = False
+    mode_auto: bool = True
+    requested_mode: MeetingMode | None = None
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
 
 
 class ChatRequest(BaseModel):
     session_id: str | None = None
+    mode: MeetingMode = MeetingMode.AUTO
     message: str = Field(min_length=1, max_length=2000)
 
 
 class ChatResponse(BaseModel):
     session_id: str | None
     phase: SessionPhase | Literal["completed"]
+    mode: MeetingMode = MeetingMode.SAME_CITY
     reply: str
     candidates: list[CandidatePlace] = Field(default_factory=list)
     timings_ms: dict[str, int] = Field(default_factory=dict)

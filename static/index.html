@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
     <title>GravityWell 推荐逻辑测试台</title>
-    <link rel="stylesheet" href="/static/style.css?v=recommendation-history-3">
+    <link rel="stylesheet" href="/static/style.css?v=feedback-motion-1">
   </head>
   <body>
     <main class="app-shell">
@@ -12,10 +12,16 @@
         <div>
           <p class="tag">MVP · 推荐逻辑测试</p>
           <h1>GravityWell</h1>
-          <p>2～4 人公平会面地点推荐</p>
+          <p>同城公平碰面与邻城会面城市推荐</p>
         </div>
         <button id="restart" class="secondary">重新开始</button>
       </header>
+
+      <nav class="mode-switch" aria-label="推荐模式">
+        <button type="button" class="mode-button active" data-mode="same_city">同城碰面</button>
+        <button type="button" class="mode-button" data-mode="intercity">邻城碰面</button>
+      </nav>
+      <p id="mode-help" class="mode-help">在同一城市内寻找交通体验较公平的会面地点。</p>
 
       <p class="timing-status">⏱ 分阶段耗时记录已开启，将显示在下一条回答下方。</p>
 
@@ -32,6 +38,6 @@
       </form>
       <p class="notice">测试版只验证推荐逻辑；采纳或重新开始后会清空本次会话。</p>
     </main>
-    <script src="/static/app.js?v=recommendation-history-3" defer></script>
+    <script src="/static/app.js?v=feedback-motion-1" defer></script>
   </body>
 </html>
