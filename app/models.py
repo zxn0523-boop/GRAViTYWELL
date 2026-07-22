@@ -81,6 +81,27 @@ class RouteExperience(BaseModel):
     summary: str = ""
 
 
+class SearchEvidence(BaseModel):
+    title: str
+    url: str
+    snippet: str = ""
+    source: str
+    published_at: str | None = None
+
+
+class VenueAtmosphereProfile(BaseModel):
+    quiet: float = Field(default=0.5, ge=0, le=1)
+    design: float = Field(default=0.5, ge=0, le=1)
+    conversation_friendly: float = Field(default=0.5, ge=0, le=1)
+    date_friendly: float = Field(default=0.5, ge=0, le=1)
+    quick_service: float = Field(default=0.5, ge=0, le=1)
+    confidence: float = Field(default=0, ge=0, le=1)
+    summary: str = "公开信息不足，氛围需要到店前确认"
+    provider: str
+    evidence: list[SearchEvidence] = Field(default_factory=list)
+    cached: bool = False
+
+
 class CandidatePlace(BaseModel):
     poi_id: str
     name: str
@@ -104,6 +125,7 @@ class CandidatePlace(BaseModel):
     meeting_city: str | None = None
     gateway_name: str | None = None
     intercity_note: str | None = None
+    atmosphere_profile: VenueAtmosphereProfile | None = None
 
 
 class GeocodedOrigin(BaseModel):
@@ -130,6 +152,7 @@ class PoiPlace(BaseModel):
     average_cost: float | None = Field(default=None, ge=0)
     opening_hours: str | None = None
     opening_verified: bool | None = None
+    atmosphere_profile: VenueAtmosphereProfile | None = None
 
 
 class WeatherSummary(BaseModel):
@@ -199,3 +222,18 @@ class CandidateExplanation(BaseModel):
 class RecommendationNarrative(BaseModel):
     intro: str
     explanations: list[CandidateExplanation] = Field(default_factory=list)
+
+
+class VenueProfileAssessment(BaseModel):
+    poi_id: str
+    quiet: float = Field(ge=0, le=1)
+    design: float = Field(ge=0, le=1)
+    conversation_friendly: float = Field(ge=0, le=1)
+    date_friendly: float = Field(ge=0, le=1)
+    quick_service: float = Field(ge=0, le=1)
+    confidence: float = Field(ge=0, le=1)
+    summary: str
+
+
+class VenueProfileBatch(BaseModel):
+    profiles: list[VenueProfileAssessment] = Field(default_factory=list)

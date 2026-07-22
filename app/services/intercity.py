@@ -7,14 +7,16 @@ from app.core.opening_hours import verify_open_for_visit
 from app.core.venue import search_terms_for_requirements, venue_fit_score
 from app.models import CandidatePlace, GeocodedOrigin, MeetingRequirements, Participant, PoiPlace, WeatherSummary
 from app.services.amap import AmapError, AmapService
+from app.services.atmosphere import AtmosphereService
 from app.services.recommender import RecommendationError, haversine_km
 
 
 class IntercityRecommendationService:
     """Independent first-round workflow for choosing between participants' cities."""
 
-    def __init__(self, amap: AmapService) -> None:
+    def __init__(self, amap: AmapService, atmosphere: AtmosphereService | None = None) -> None:
         self.amap = amap
+        self.atmosphere = atmosphere
 
     async def recommend(
         self,
@@ -96,6 +98,14 @@ class IntercityRecommendationService:
         if not shortlisted:
             raise RecommendationError("双方城市中都没有找到符合品类和营业时间要求的场所")
         _record_timing(timings_ms, "场所搜索与初筛", search_started)
+
+        if self.atmosphere and self.atmosphere.is_needed(requirements):
+            atmosphere_started = perf_counter()
+            try:
+                await self.atmosphere.enrich([place for _, place, _ in shortlisted], requirements)
+            except Exception:
+                pass
+            _record_timing(timings_ms, "场所氛围检索", atmosphere_started)
 
         routes_started = perf_counter()
         routed = await asyncio.gather(

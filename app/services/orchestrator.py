@@ -160,7 +160,7 @@ class ConversationOrchestrator:
                 requested_label = "邻城" if state.requested_mode == MeetingMode.INTERCITY else "同城"
                 reply = (
                     f"你选择了{requested_label}模式，但根据真实地址应属于{mode_label}场景。"
-                    "我不会为满足模式而改用异地同名地点；请确认地址，或补充更明确的城市。\n\n"
+                    "系统将优先按实际地点判断同城或邻城模式；请确认地址，或补充更明确的城市。\n\n"
                     + reply
                 )
             elif state.requested_mode:

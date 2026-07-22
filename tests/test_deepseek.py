@@ -7,6 +7,37 @@ from app.models import MeetingRequirements
 from app.services.deepseek import DeepSeekService, _normalize_extraction_payload
 
 
+async def test_build_venue_profiles_uses_one_grounded_json_call() -> None:
+    from app.models import PoiPlace, SearchEvidence
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        body = request.content.decode("utf-8")
+        assert "环境安静" in body
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{
+                    "message": {
+                        "content": '{"profiles":[{"poi_id":"p1","quiet":0.9,"design":0.7,"conversation_friendly":0.9,"date_friendly":0.8,"quick_service":0.1,"confidence":0.8,"summary":"公开评价提到环境安静"}]}'
+                    }
+                }]
+            },
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    service = DeepSeekService("test", "test", client=client)
+    profiles = await service.build_venue_profiles(
+        MeetingRequirements(activity="聊天", atmosphere=["安静"]),
+        [(
+            PoiPlace(poi_id="p1", name="测试店", longitude=1, latitude=1),
+            [SearchEvidence(title="评价", url="https://review.test", snippet="环境安静", source="test")],
+        )],
+    )
+    assert profiles[0].poi_id == "p1"
+    assert profiles[0].quiet == 0.9
+    await client.aclose()
+
+
 async def test_null_participant_name_is_recovered_from_user_message() -> None:
     model_output = {
         "intent": "update",

@@ -12,6 +12,10 @@ from app.models import (
     ExtractionResult,
     MeetingRequirements,
     RecommendationNarrative,
+    PoiPlace,
+    SearchEvidence,
+    VenueProfileAssessment,
+    VenueProfileBatch,
 )
 
 
@@ -46,6 +50,7 @@ class DeepSeekService:
         client: httpx.AsyncClient | None = None,
         extraction_attempts: int = 3,
         retry_delay_seconds: float = 0.35,
+        profile_model: str | None = None,
     ) -> None:
         self.api_key = api_key
         self.model = model
@@ -53,6 +58,7 @@ class DeepSeekService:
         self.client = client or httpx.AsyncClient(timeout=timeout_seconds)
         self.extraction_attempts = max(1, extraction_attempts)
         self.retry_delay_seconds = max(0.0, retry_delay_seconds)
+        self.profile_model = profile_model or model
 
     async def close(self) -> None:
         if self._owns_client:
@@ -168,6 +174,57 @@ class DeepSeekService:
             "当前会话没有被修改，无需重新开始，请直接再发送一次。"
         )
 
+    async def build_venue_profiles(
+        self,
+        requirements: MeetingRequirements,
+        venues: list[tuple[PoiPlace, list[SearchEvidence]]],
+    ) -> list[VenueProfileAssessment]:
+        """Turn public snippets into structured signals in one economical LLM call."""
+
+        compact = [
+            {
+                "poi_id": place.poi_id,
+                "name": place.name,
+                "city": place.city,
+                "type": place.type_name,
+                "evidence": [
+                    {"title": item.title, "snippet": item.snippet[:600], "url": item.url}
+                    for item in evidence[:4]
+                ],
+            }
+            for place, evidence in venues
+        ]
+        prompt = f"""
+用户需要：{requirements.model_dump_json(exclude_none=True)}
+候选场所及公开搜索摘要：{json.dumps(compact, ensure_ascii=False)}
+
+请逐个判断场所氛围，只能依据给出的名称、类型和摘要，不能凭空补充事实。
+quiet、design、conversation_friendly、date_friendly、quick_service、confidence 均为 0～1。
+证据矛盾或不足时 confidence 应低，其他分数靠近 0.5；summary 用一句中文说明证据结论或不确定性。
+返回 JSON：{{"profiles":[{{"poi_id":"原样复制","quiet":0.5,"design":0.5,"conversation_friendly":0.5,"date_friendly":0.5,"quick_service":0.5,"confidence":0.3,"summary":"..."}}]}}
+""".strip()
+        try:
+            response = await self.client.post(
+                self.ENDPOINT,
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                json={
+                    "model": self.profile_model,
+                    "messages": [
+                        {"role": "system", "content": "你是场所公开信息分析器，只输出有效 JSON。"},
+                        {"role": "user", "content": prompt},
+                    ],
+                    "response_format": {"type": "json_object"},
+                    "thinking": {"type": "disabled"},
+                    "temperature": 0.1,
+                    "max_tokens": 1300,
+                },
+            )
+            response.raise_for_status()
+            content = response.json()["choices"][0]["message"]["content"]
+            return VenueProfileBatch.model_validate_json(content).profiles
+        except (httpx.HTTPError, KeyError, IndexError, ValueError, ValidationError):
+            return []
+
     async def explain_recommendations(
         self,
         requirements: MeetingRequirements,
@@ -189,6 +246,14 @@ class DeepSeekService:
                 "meeting_city": candidate.meeting_city,
                 "gateway_name": candidate.gateway_name,
                 "intercity_note": candidate.intercity_note,
+                "atmosphere_profile": (
+                    {
+                        "summary": candidate.atmosphere_profile.summary,
+                        "confidence": candidate.atmosphere_profile.confidence,
+                        "provider": candidate.atmosphere_profile.provider,
+                    }
+                    if candidate.atmosphere_profile else None
+                ),
             }
             for candidate in candidates
         ]

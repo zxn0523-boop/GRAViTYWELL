@@ -129,6 +129,19 @@ function renderCandidates(items, messageArticle) {
     const gatewayHtml = item.meeting_city
       ? `<p class="gateway"><strong>邻城方案：</strong>在 ${escapeHtml(item.meeting_city)} 见面${item.gateway_name ? ` · 参考到达门户 ${escapeHtml(item.gateway_name)}` : ""}</p>`
       : "";
+    const atmosphere = item.atmosphere_profile;
+    const evidenceLinks = (atmosphere?.evidence || []).slice(0, 2).map(evidence => {
+      const url = safeHttpUrl(evidence.url);
+      return url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(evidence.title)}</a>` : "";
+    }).filter(Boolean).join(" · ");
+    const atmosphereHtml = atmosphere
+      ? `<div class="atmosphere-evidence">
+          <strong>公开信息氛围判断</strong>
+          <p>${escapeHtml(atmosphere.summary)}</p>
+          <small>可信度 ${Math.round(atmosphere.confidence * 100)}% · ${escapeHtml(atmosphere.provider)}${atmosphere.cached ? " · 已使用缓存" : ""}</small>
+          ${evidenceLinks ? `<nav>参考：${evidenceLinks}</nav>` : ""}
+        </div>`
+      : "";
     card.innerHTML = `
       <span class="score">${item.score} 分</span>
       <h2>${index + 1}. ${escapeHtml(item.name)}</h2>
@@ -138,6 +151,7 @@ function renderCandidates(items, messageArticle) {
       <div class="routes">${routeHtml}</div>
       ${weatherHtml}
       ${openingHtml}
+      ${atmosphereHtml}
       ${item.recommendation_reason ? `<p class="reason">${escapeHtml(item.recommendation_reason)}</p>` : ""}
       ${warningHtml}
       <button class="accept" data-accept>采纳这个结果并清空会话</button>`;
@@ -261,6 +275,15 @@ function escapeHtml(value) {
   return String(value).replace(/[&<>'"]/g, char => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
   })[char]);
+}
+
+function safeHttpUrl(value) {
+  try {
+    const parsed = new URL(String(value));
+    return ["http:", "https:"].includes(parsed.protocol) ? parsed.href : "";
+  } catch {
+    return "";
+  }
 }
 
 function formatDuration(milliseconds) {

@@ -7,8 +7,11 @@ from fastapi.staticfiles import StaticFiles
 from app.config import ROOT_DIR, get_settings
 from app.models import ChatRequest, ChatResponse, CreateSessionResponse
 from app.repositories.sessions import SessionRepository
+from app.repositories.venue_profiles import VenueProfileRepository
 from app.services.amap import AmapService
 from app.services.deepseek import DeepSeekError, DeepSeekService
+from app.services.atmosphere import AtmosphereService
+from app.services.search import build_search_provider
 from app.services.orchestrator import ConversationOrchestrator
 from app.services.intercity import IntercityRecommendationService
 from app.services.recommender import RecommendationError, RecommendationService
@@ -20,22 +23,40 @@ async def lifespan(app: FastAPI):
     repository = SessionRepository(settings.database_path, settings.session_ttl_hours)
     repository.initialize()
     repository.purge_expired()
+    venue_profiles = VenueProfileRepository(
+        settings.database_path,
+        settings.venue_profile_cache_days,
+    )
+    venue_profiles.initialize()
     deepseek = DeepSeekService(
         settings.deepseek_api_key,
         settings.deepseek_model,
         settings.request_timeout_seconds,
+        profile_model=settings.deepseek_profile_model,
     )
     amap = AmapService(settings.amap_api_key, settings.request_timeout_seconds)
+    search_provider = build_search_provider(settings)
+    atmosphere = (
+        AtmosphereService(
+            search_provider,
+            deepseek,
+            venue_profiles,
+            settings.atmosphere_candidate_limit,
+        )
+        if search_provider else None
+    )
     app.state.sessions = repository
     app.state.deepseek = deepseek
     app.state.amap = amap
     app.state.orchestrator = ConversationOrchestrator(
         repository,
         deepseek,
-        RecommendationService(amap),
-        IntercityRecommendationService(amap),
+        RecommendationService(amap, atmosphere),
+        IntercityRecommendationService(amap, atmosphere),
     )
     yield
+    if search_provider:
+        await search_provider.close()
     await deepseek.close()
     await amap.close()
 

@@ -49,6 +49,11 @@ header p { margin: 0; color: #666; font-size: 13px; }
 .weather { margin: 8px 0; color: #49623a; font-size: 13px; }
 .opening { margin: 8px 0; color: #4d5a43; font-size: 12px; }
 .gateway { margin: 9px 0; padding: 8px 10px; border-left: 3px solid #78915e; background: #f4f7ef; color: #405335; font-size: 12px; }
+.atmosphere-evidence { margin: 10px 0; padding: 10px 12px; border: 1px solid #d8dfd1; border-radius: 8px; background: #f8faf5; color: #46513f; font-size: 12px; }
+.atmosphere-evidence p { margin: 5px 0; line-height: 1.55; }
+.atmosphere-evidence small { color: #747c6d; }
+.atmosphere-evidence nav { margin-top: 6px; line-height: 1.5; }
+.atmosphere-evidence a { color: #4f6d3c; text-decoration-thickness: 1px; text-underline-offset: 2px; }
 .warning { color: #9b5b22; }
 .accept { width: 100%; margin-top: 12px; padding: 9px; border: 0; border-radius: 8px; background: #d9ef7f; color: #263019; font-weight: 700; }
 .accept:disabled { background: #e5e7e1; color: #7a7e74; cursor: default; }

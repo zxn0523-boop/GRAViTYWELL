@@ -86,4 +86,21 @@ def venue_fit_score(place: PoiPlace, requirements: MeetingRequirements) -> float
     if any(word in activity_text for word in ("热闹", "逛街", "夜游")):
         if place.place_kind == "district":
             score += 0.25
+    profile = place.atmosphere_profile
+    if profile and profile.confidence > 0:
+        desired: list[float] = []
+        if any(word in activity_text for word in ("安静", "私密")):
+            desired.append(profile.quiet)
+        if any(word in activity_text for word in ("设计", "特别", "艺术", "氛围")):
+            desired.append(profile.design)
+        if any(word in activity_text for word in ("聊天", "久坐")):
+            desired.append(profile.conversation_friendly)
+        if any(word in activity_text for word in ("约会", "浪漫")):
+            desired.append(profile.date_friendly)
+        if experience_sensitive:
+            desired.append(1 - profile.quick_service)
+        if desired:
+            evidence_score = sum(desired) / len(desired)
+            evidence_weight = min(0.55, profile.confidence * 0.55)
+            score = score * (1 - evidence_weight) + evidence_score * evidence_weight
     return max(0.0, min(1.0, score))
