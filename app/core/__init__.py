@@ -1,0 +1,2 @@
+"""Deterministic recommendation logic."""
+

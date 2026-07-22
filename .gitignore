@@ -1,0 +1,13 @@
+api.env
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+.pytest_cache/
+*.egg-info/
+*.py[cod]
+gravitywell.db
+*.db-journal
+*.log
+.DS_Store

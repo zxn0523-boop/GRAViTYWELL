@@ -1,0 +1,223 @@
+import logging
+import re
+from time import perf_counter
+
+from app.models import (
+    ChatResponse,
+    ConversationMessage,
+    ExtractionResult,
+    SessionPhase,
+    SessionState,
+)
+from app.repositories.sessions import SessionRepository
+from app.services.conversation import merge_requirements, next_missing_question
+from app.services.deepseek import DeepSeekService
+from app.services.recommender import RecommendationService
+
+
+logger = logging.getLogger(__name__)
+
+
+class ConversationOrchestrator:
+    def __init__(
+        self,
+        sessions: SessionRepository,
+        deepseek: DeepSeekService,
+        recommender: RecommendationService,
+    ) -> None:
+        self.sessions = sessions
+        self.deepseek = deepseek
+        self.recommender = recommender
+
+    async def chat(self, session_id: str | None, user_message: str) -> ChatResponse:
+        request_started = perf_counter()
+        timings_ms: dict[str, int] = {}
+        state = self.sessions.get(session_id) if session_id else None
+        if state is None:
+            state = self.sessions.create()
+
+        previous_origins = {
+            participant.name: participant.origin_text
+            for participant in state.requirements.participants
+        }
+        previous_preferred_area = state.requirements.preferred_area_text
+        state.history.append(ConversationMessage(role="user", content=user_message))
+        understanding_started = perf_counter()
+        extracted = self._fast_path_extraction(state, user_message)
+        if extracted is not None:
+            timings_ms["本地意图判断"] = self._elapsed_ms(understanding_started)
+        else:
+            extracted = await self.deepseek.extract_requirements(
+                state.requirements,
+                user_message,
+                history=state.history,
+                candidates=state.candidates,
+            )
+            timings_ms["需求理解"] = self._elapsed_ms(understanding_started)
+
+        if extracted.intent == "restart":
+            self.sessions.delete(state.session_id)
+            timings_ms["总耗时"] = self._elapsed_ms(request_started)
+            self._log_timings(state.session_id, timings_ms)
+            return ChatResponse(
+                session_id=None,
+                phase="completed",
+                reply="本次会话已清空。可以重新告诉我参与者、出发地、时间和想做的事。",
+                timings_ms=timings_ms,
+                cleared=True,
+            )
+
+        if extracted.intent == "accept":
+            if not state.candidates:
+                return self._save_reply(
+                    state,
+                    "目前还没有可以采纳的推荐。请先完成会面地点计算。",
+                    timings_ms=timings_ms,
+                    request_started=request_started,
+                )
+            self.sessions.delete(state.session_id)
+            timings_ms["总耗时"] = self._elapsed_ms(request_started)
+            self._log_timings(state.session_id, timings_ms)
+            return ChatResponse(
+                session_id=None,
+                phase="completed",
+                reply="已采纳本次推荐。本组对话、出发地和计算结果均已清空。",
+                timings_ms=timings_ms,
+                cleared=True,
+            )
+
+        state.requirements = merge_requirements(
+            state.requirements,
+            extracted,
+            user_message,
+        )
+        current_origins = {
+            participant.name: participant.origin_text
+            for participant in state.requirements.participants
+        }
+        if (previous_origins and current_origins != previous_origins) or (
+            state.requirements.preferred_area_text != previous_preferred_area
+        ):
+            state.origins_confirmed = False
+            state.candidates = []
+            state.phase = SessionPhase.COLLECTING
+
+        if extracted.intent == "confirm_origins" and state.phase == SessionPhase.CONFIRMING_ORIGINS:
+            state.origins_confirmed = True
+            state.phase = SessionPhase.READY
+
+        missing_question = next_missing_question(state.requirements)
+        if missing_question:
+            state.phase = SessionPhase.COLLECTING
+            return self._save_reply(
+                state,
+                extracted.question or missing_question,
+                timings_ms=timings_ms,
+                request_started=request_started,
+            )
+
+        if not state.origins_confirmed:
+            origins_started = perf_counter()
+            state.requirements = await self.recommender.resolve_origins(state.requirements)
+            timings_ms["地址解析"] = self._elapsed_ms(origins_started)
+            state.phase = SessionPhase.CONFIRMING_ORIGINS
+            lines = [
+                f"- {participant.name}：{participant.formatted_address}"
+                for participant in state.requirements.participants
+            ]
+            if state.requirements.preferred_area_text:
+                lines.append(
+                    f"- 优先会面区域：{state.requirements.preferred_area_formatted_address}"
+                )
+            reply = "我把出发地解析成了：\n" + "\n".join(lines) + "\n\n这些地点正确吗？确认后我再开始路线计算。"
+            return self._save_reply(
+                state,
+                reply,
+                timings_ms=timings_ms,
+                request_started=request_started,
+            )
+
+        state.candidates = await self.recommender.recommend(
+            state.requirements,
+            timings_ms=timings_ms,
+        )
+        explanation_started = perf_counter()
+        narrative = await self.deepseek.explain_recommendations(
+            state.requirements,
+            state.candidates,
+        )
+        timings_ms["结果说明"] = self._elapsed_ms(explanation_started)
+        reasons = {item.poi_id: item.reason for item in narrative.explanations}
+        for candidate in state.candidates:
+            candidate.recommendation_reason = reasons.get(candidate.poi_id)
+        state.phase = SessionPhase.RECOMMENDED
+        reply = narrative.intro + "\n你可以继续说“更安静”“少换乘”或“照顾某个人”；满意后说“采纳”。"
+        return self._save_reply(
+            state,
+            reply,
+            state.candidates,
+            timings_ms=timings_ms,
+            request_started=request_started,
+        )
+
+    def _save_reply(
+        self,
+        state: SessionState,
+        reply: str,
+        candidates=None,
+        timings_ms: dict[str, int] | None = None,
+        request_started: float | None = None,
+    ) -> ChatResponse:
+        timings_ms = timings_ms or {}
+        state.history.append(ConversationMessage(role="assistant", content=reply))
+        state.history = state.history[-20:]
+        save_started = perf_counter()
+        self.sessions.save(state)
+        timings_ms["会话保存"] = self._elapsed_ms(save_started)
+        if request_started is not None:
+            timings_ms["总耗时"] = self._elapsed_ms(request_started)
+        self._log_timings(state.session_id, timings_ms)
+        return ChatResponse(
+            session_id=state.session_id,
+            phase=state.phase,
+            reply=reply,
+            candidates=candidates or [],
+            timings_ms=timings_ms,
+        )
+
+    @staticmethod
+    def _elapsed_ms(started: float) -> int:
+        return round((perf_counter() - started) * 1000)
+
+    @staticmethod
+    def _fast_path_extraction(
+        state: SessionState,
+        user_message: str,
+    ) -> ExtractionResult | None:
+        """Handle unambiguous commands locally so a simple confirmation never waits for an LLM."""
+
+        normalized = re.sub(r"[\s，,。.!！?？]", "", user_message).lower()
+        if normalized in {"重新开始", "重来", "清空会话"}:
+            return ExtractionResult(intent="restart")
+        if normalized in {"采纳", "接受推荐", "就这样"}:
+            return ExtractionResult(intent="accept")
+        if state.phase == SessionPhase.CONFIRMING_ORIGINS and normalized in {
+            "确认",
+            "正确",
+            "是",
+            "是的",
+            "对",
+            "对的",
+            "没错",
+            "没问题",
+            "地址正确",
+            "地点正确",
+            "可以",
+        }:
+            return ExtractionResult(intent="confirm_origins")
+        return None
+
+    @staticmethod
+    def _log_timings(session_id: str, timings_ms: dict[str, int]) -> None:
+        summary = ", ".join(f"{label}={value}ms" for label, value in timings_ms.items())
+        logger.info("chat_timing session=%s %s", session_id, summary)

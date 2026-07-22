@@ -1,0 +1,49 @@
+:root {
+  font-family: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: #20231f;
+  background: #f3f4ef;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; }
+button, textarea { font: inherit; }
+button { cursor: pointer; }
+
+.app-shell { width: min(100%, 760px); min-height: 100vh; margin: auto; padding: 20px 16px 120px; background: white; }
+header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; padding-bottom: 18px; border-bottom: 1px solid #ddd; }
+h1 { margin: 2px 0; font-size: 25px; }
+header p { margin: 0; color: #666; font-size: 13px; }
+.tag { color: #56733d; font-weight: 700; letter-spacing: .08em; }
+.secondary { padding: 8px 11px; border: 1px solid #bbb; border-radius: 8px; background: white; }
+.timing-status { margin: 14px 0 0; padding: 8px 10px; border-radius: 8px; background: #f4f7ef; color: #56733d; font-size: 12px; }
+.messages { padding: 18px 0; }
+.message { max-width: 88%; margin: 0 0 16px; }
+.message b { display: block; margin-bottom: 5px; font-size: 12px; color: #56733d; }
+.message p { margin: 0; padding: 12px 14px; border-radius: 4px 14px 14px; background: #edf1e9; line-height: 1.65; white-space: pre-wrap; }
+.message.user { margin-left: auto; }
+.message.user b { color: #666; text-align: right; }
+.message.user p { color: white; background: #3f4f36; border-radius: 14px 4px 14px 14px; }
+.timings { display: block; margin-top: 8px; color: #6b7280; font-size: 12px; line-height: 1.5; }
+.message.with-candidates { width: 100%; max-width: 100%; }
+.candidate-round { display: grid; gap: 12px; margin-top: 14px; padding: 12px; border: 1px solid #dce2d6; border-radius: 12px; background: #fafbf8; }
+.round-heading { margin: 0; color: #56733d; font-size: 14px; }
+.candidate { padding: 15px; border: 1px solid #cad3c2; border-radius: 12px; }
+.candidate h2 { margin: 0 0 4px; font-size: 17px; }
+.candidate .meta { margin: 0 0 10px; color: #666; font-size: 12px; }
+.score { float: right; color: #42612c; font-weight: 800; }
+.breakdown { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0; }
+.breakdown span { padding: 3px 6px; border-radius: 5px; background: #edf1e9; color: #52604b; font-size: 10px; }
+.routes { margin: 10px 0; padding: 10px 12px; background: #f5f6f2; border-radius: 8px; }
+.routes p { margin: 4px 0; font-size: 13px; }
+.reason, .warning { margin: 8px 0 0; font-size: 13px; line-height: 1.55; }
+.weather { margin: 8px 0; color: #49623a; font-size: 13px; }
+.opening { margin: 8px 0; color: #4d5a43; font-size: 12px; }
+.warning { color: #9b5b22; }
+.accept { width: 100%; margin-top: 12px; padding: 9px; border: 0; border-radius: 8px; background: #d9ef7f; color: #263019; font-weight: 700; }
+.accept:disabled { background: #e5e7e1; color: #7a7e74; cursor: default; }
+.composer { position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%); width: min(calc(100% - 24px), 728px); display: flex; gap: 8px; padding: 10px; border: 1px solid #bbb; border-radius: 12px; background: white; box-shadow: 0 8px 25px #0002; }
+textarea { flex: 1; min-width: 0; resize: none; border: 0; outline: 0; line-height: 1.5; }
+.composer button { width: 64px; border: 0; border-radius: 8px; background: #405335; color: white; font-weight: 700; }
+.composer button:disabled { opacity: .45; }
+.notice { position: fixed; bottom: 3px; left: 0; width: 100%; margin: 0; color: #888; font-size: 10px; text-align: center; }
+@media (min-width: 720px) { .app-shell { padding-inline: 28px; } }
