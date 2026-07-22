@@ -51,8 +51,8 @@ async def lifespan(app: FastAPI):
     app.state.orchestrator = ConversationOrchestrator(
         repository,
         deepseek,
-        RecommendationService(amap, atmosphere),
-        IntercityRecommendationService(amap, atmosphere),
+        RecommendationService(amap, atmosphere, deepseek),
+        IntercityRecommendationService(amap, atmosphere, deepseek),
     )
     yield
     if search_provider:

@@ -4,23 +4,25 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
     <title>GravityWell 推荐逻辑测试台</title>
-    <link rel="stylesheet" href="/static/style.css?v=atmosphere-search-1">
+    <link rel="stylesheet" href="/static/style.css?v=sticky-header-1">
   </head>
   <body>
     <main class="app-shell">
-      <header>
-        <div>
-          <p class="tag">MVP · 推荐逻辑测试</p>
-          <h1>GravityWell</h1>
-          <p>同城公平碰面与邻城会面城市推荐</p>
-        </div>
-        <button id="restart" class="secondary">重新开始</button>
-      </header>
+      <div class="sticky-top">
+        <header>
+          <div>
+            <p class="tag">MVP · 推荐逻辑测试</p>
+            <h1>GravityWell</h1>
+            <p>同城公平碰面与邻城会面城市推荐</p>
+          </div>
+          <button id="restart" class="secondary">重新开始</button>
+        </header>
 
-      <nav class="mode-switch" aria-label="推荐模式">
-        <button type="button" class="mode-button active" data-mode="same_city">同城碰面</button>
-        <button type="button" class="mode-button" data-mode="intercity">邻城碰面</button>
-      </nav>
+        <nav class="mode-switch" aria-label="推荐模式">
+          <button type="button" class="mode-button active" data-mode="same_city">同城碰面</button>
+          <button type="button" class="mode-button" data-mode="intercity">邻城碰面</button>
+        </nav>
+      </div>
       <p id="mode-help" class="mode-help">在同一城市内寻找交通体验较公平的会面地点。</p>
 
       <p class="timing-status">⏱ 分阶段耗时记录已开启，将显示在下一条回答下方。</p>

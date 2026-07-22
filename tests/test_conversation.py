@@ -100,6 +100,7 @@ def test_atmosphere_and_price_update_cannot_replace_locked_cafe_category() -> No
         search_keywords=["咖啡馆"],
     )
     extracted = ExtractionResult(
+        request_scope="refine",
         activity="用餐",
         atmosphere=["环境更特别"],
         constraints=["可以稍微贵一点"],
@@ -119,9 +120,38 @@ def test_atmosphere_and_price_update_cannot_replace_locked_cafe_category() -> No
 
 def test_explicit_category_change_can_unlock_cafe_request() -> None:
     current = MeetingRequirements(activity="喝咖啡", search_keywords=["咖啡馆"])
-    extracted = ExtractionResult(activity="吃饭", search_keywords=["餐厅"])
+    extracted = ExtractionResult(
+        request_scope="change_activity",
+        activity="吃饭",
+        activity_category="dining",
+        target_place_kinds=["venue"],
+        search_keywords=["餐厅"],
+    )
 
     merged = merge_requirements(current, extracted, "不想喝咖啡了，改成餐厅吃饭")
 
     assert merged.activity == "吃饭"
     assert merged.search_keywords == ["餐厅"]
+
+
+def test_complete_new_brief_replaces_old_cafe_plan() -> None:
+    current = MeetingRequirements(
+        activity="喝咖啡",
+        activity_category="cafe",
+        target_place_kinds=["venue"],
+        search_keywords=["咖啡馆"],
+    )
+    extracted = ExtractionResult(
+        request_scope="replace",
+        activity="逛有历史感的街区",
+        activity_category="street_walk",
+        target_place_kinds=["district", "attraction"],
+        atmosphere=["有历史感"],
+        search_keywords=["历史文化街区", "特色街区"],
+    )
+
+    merged = merge_requirements(current, extracted, "想逛逛有历史感的街区")
+
+    assert merged.activity_category == "street_walk"
+    assert merged.search_keywords == ["历史文化街区", "特色街区"]
+    assert "venue" not in merged.target_place_kinds

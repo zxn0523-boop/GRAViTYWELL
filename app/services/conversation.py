@@ -8,7 +8,11 @@ def merge_requirements(
 ) -> MeetingRequirements:
     """Apply only fields that the user actually changed or supplied."""
 
-    updated = current.model_copy(deep=True)
+    updated = (
+        MeetingRequirements(mode=current.mode)
+        if extracted.request_scope == "replace"
+        else current.model_copy(deep=True)
+    )
     if extracted.participants is not None:
         previous = {
             (participant.name, participant.origin_text): participant
@@ -31,7 +35,6 @@ def merge_requirements(
                         setattr(participant, field, getattr(known, field))
             merged_participants.append(participant)
         updated.participants = merged_participants
-    category_locked = _coffee_category_is_locked(current, user_message)
     for field in (
         "meeting_time",
         "meeting_time_text",
@@ -45,48 +48,13 @@ def merge_requirements(
         if value is not None:
             setattr(updated, field, value)
 
-    if extracted.activity is not None and not (
-        category_locked and "咖啡" not in extracted.activity
-    ):
-        updated.activity = extracted.activity
-
-    if extracted.search_keywords is not None:
-        if category_locked:
-            coffee_keywords = [
-                keyword for keyword in extracted.search_keywords if "咖啡" in keyword
-            ]
-            if coffee_keywords:
-                updated.search_keywords = coffee_keywords
-        else:
-            updated.search_keywords = extracted.search_keywords
+    may_change_main_activity = extracted.request_scope in {"replace", "change_activity"} or current.activity is None
+    if may_change_main_activity:
+        for field in ("activity", "activity_category", "target_place_kinds", "search_keywords"):
+            value = getattr(extracted, field)
+            if value is not None:
+                setattr(updated, field, value)
     return updated
-
-
-def _coffee_category_is_locked(
-    current: MeetingRequirements,
-    user_message: str,
-) -> bool:
-    current_is_coffee = any("咖啡" in keyword for keyword in current.search_keywords)
-    if not current_is_coffee:
-        return False
-    explicit_category_change = any(
-        marker in user_message
-        for marker in (
-            "不喝咖啡",
-            "不想喝咖啡",
-            "改成餐厅",
-            "换成餐厅",
-            "改成吃饭",
-            "换成吃饭",
-            "想吃饭",
-            "去吃饭",
-            "改成散步",
-            "换成散步",
-            "改成看展",
-            "换成看展",
-        )
-    )
-    return not explicit_category_change
 
 
 def next_missing_question(requirements: MeetingRequirements) -> str | None:

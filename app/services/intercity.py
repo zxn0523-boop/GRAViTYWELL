@@ -8,15 +8,22 @@ from app.core.venue import search_terms_for_requirements, venue_fit_score
 from app.models import CandidatePlace, GeocodedOrigin, MeetingRequirements, Participant, PoiPlace, WeatherSummary
 from app.services.amap import AmapError, AmapService
 from app.services.atmosphere import AtmosphereService
+from app.services.deepseek import DeepSeekService
 from app.services.recommender import RecommendationError, haversine_km
 
 
 class IntercityRecommendationService:
     """Independent first-round workflow for choosing between participants' cities."""
 
-    def __init__(self, amap: AmapService, atmosphere: AtmosphereService | None = None) -> None:
+    def __init__(
+        self,
+        amap: AmapService,
+        atmosphere: AtmosphereService | None = None,
+        semantic_reviewer: DeepSeekService | None = None,
+    ) -> None:
         self.amap = amap
         self.atmosphere = atmosphere
+        self.semantic_reviewer = semantic_reviewer
 
     async def recommend(
         self,
@@ -59,45 +66,33 @@ class IntercityRecommendationService:
             local = local_participants[0]
             search_jobs.append((city, gateway.formatted_address if gateway else None, local.longitude or 0, local.latitude or 0, 8_000))
 
-        keywords = search_terms_for_requirements(requirements) or ["休闲场所"]
-        discovered = await asyncio.gather(
-            *(
-                self.amap.search_nearby(keywords, longitude, latitude, radius=radius, limit=10)
-                for _, _, longitude, latitude, radius in search_jobs
-            ),
-            return_exceptions=True,
-        )
-        places_by_city: dict[str, dict[str, tuple[PoiPlace, str | None]]] = {
-            city: {} for city in city_participants
-        }
-        for job, result in zip(search_jobs, discovered, strict=True):
-            host_city, gateway_name, *_ = job
-            if isinstance(result, Exception):
-                continue
-            for place in result:
-                if place.city and _city_key(place.city) != _city_key(host_city):
-                    continue
-                places_by_city[host_city].setdefault(place.poi_id, (place, gateway_name))
-
-        shortlisted: list[tuple[str, PoiPlace, str | None]] = []
-        category_is_locked = any("咖啡" in keyword for keyword in requirements.search_keywords)
-        for city, place_map in places_by_city.items():
-            fitted: list[tuple[float, PoiPlace, str | None]] = []
-            for place, gateway_name in place_map.values():
-                place.opening_verified = verify_open_for_visit(place.opening_hours, requirements.meeting_time)
-                if place.opening_hours and place.opening_verified is not True:
-                    continue
-                fit = venue_fit_score(place, requirements)
-                if fit >= 0.15:
-                    fitted.append((fit, place, gateway_name))
-            if not fitted and category_is_locked:
-                continue
-            fitted.sort(key=lambda item: (-item[0], -(item[1].map_rating or 0)))
-            shortlisted.extend((city, place, gateway) for _, place, gateway in fitted[:5])
+        shortlisted = await self._search_shortlist(requirements, search_jobs, city_participants)
 
         if not shortlisted:
             raise RecommendationError("双方城市中都没有找到符合品类和营业时间要求的场所")
         _record_timing(timings_ms, "场所搜索与初筛", search_started)
+
+        if self.semantic_reviewer:
+            review_started = perf_counter()
+            review = await self.semantic_reviewer.review_candidate_semantics(
+                requirements,
+                [place for _, place, _ in shortlisted],
+            )
+            if review.revised_search_keywords and (
+                not review.acceptable or review.rejected_poi_ids
+            ):
+                requirements.search_keywords = review.revised_search_keywords
+                if review.revised_target_place_kinds:
+                    requirements.target_place_kinds = review.revised_target_place_kinds
+                shortlisted = await self._search_shortlist(requirements, search_jobs, city_participants)
+                if not shortlisted:
+                    raise RecommendationError("语义复核后仍未找到符合主要活动的邻城候选")
+            elif review.rejected_poi_ids:
+                rejected = set(review.rejected_poi_ids)
+                shortlisted = [item for item in shortlisted if item[1].poi_id not in rejected]
+                if not shortlisted:
+                    raise RecommendationError("语义复核剔除了全部跑题的邻城候选")
+            _record_timing(timings_ms, "候选语义复核", review_started)
 
         if self.atmosphere and self.atmosphere.is_needed(requirements):
             atmosphere_started = perf_counter()
@@ -128,6 +123,46 @@ class IntercityRecommendationService:
         ranked = rank_intercity_results(candidates)
         _record_timing(timings_ms, "天气与邻城评分", scoring_started)
         return ranked[:3]
+
+    async def _search_shortlist(
+        self,
+        requirements: MeetingRequirements,
+        search_jobs: list[tuple[str, str | None, float, float, int]],
+        city_participants: dict[str, list[Participant]],
+    ) -> list[tuple[str, PoiPlace, str | None]]:
+        keywords = search_terms_for_requirements(requirements) or ["休闲场所"]
+        discovered = await asyncio.gather(
+            *(
+                self.amap.search_nearby(keywords, longitude, latitude, radius=radius, limit=10)
+                for _, _, longitude, latitude, radius in search_jobs
+            ),
+            return_exceptions=True,
+        )
+        places_by_city: dict[str, dict[str, tuple[PoiPlace, str | None]]] = {
+            city: {} for city in city_participants
+        }
+        for job, result in zip(search_jobs, discovered, strict=True):
+            host_city, gateway_name, *_ = job
+            if isinstance(result, Exception):
+                continue
+            for place in result:
+                if place.city and _city_key(place.city) != _city_key(host_city):
+                    continue
+                places_by_city[host_city].setdefault(place.poi_id, (place, gateway_name))
+
+        shortlisted: list[tuple[str, PoiPlace, str | None]] = []
+        for city, place_map in places_by_city.items():
+            fitted: list[tuple[float, PoiPlace, str | None]] = []
+            for place, gateway_name in place_map.values():
+                place.opening_verified = verify_open_for_visit(place.opening_hours, requirements.meeting_time)
+                if place.opening_hours and place.opening_verified is not True:
+                    continue
+                fit = venue_fit_score(place, requirements)
+                if fit >= 0.15:
+                    fitted.append((fit, place, gateway_name))
+            fitted.sort(key=lambda item: (-item[0], -(item[1].map_rating or 0)))
+            shortlisted.extend((city, place, gateway) for _, place, gateway in fitted[:5])
+        return shortlisted
 
     async def _find_gateways(self, cities: list[str]) -> dict[str, GeocodedOrigin]:
         results = await asyncio.gather(

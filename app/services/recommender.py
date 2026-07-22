@@ -10,6 +10,7 @@ from app.core.venue import search_terms_for_requirements, venue_fit_score
 from app.models import CandidatePlace, GeocodedOrigin, MeetingRequirements, Participant, PoiPlace, WeatherSummary
 from app.services.amap import AmapError, AmapService
 from app.services.atmosphere import AtmosphereService
+from app.services.deepseek import DeepSeekService
 
 
 class RecommendationError(RuntimeError):
@@ -17,9 +18,15 @@ class RecommendationError(RuntimeError):
 
 
 class RecommendationService:
-    def __init__(self, amap: AmapService, atmosphere: AtmosphereService | None = None) -> None:
+    def __init__(
+        self,
+        amap: AmapService,
+        atmosphere: AtmosphereService | None = None,
+        semantic_reviewer: DeepSeekService | None = None,
+    ) -> None:
         self.amap = amap
         self.atmosphere = atmosphere
+        self.semantic_reviewer = semantic_reviewer
 
     async def resolve_origins(self, requirements: MeetingRequirements) -> MeetingRequirements:
         updated = requirements.model_copy(deep=True)
@@ -71,51 +78,29 @@ class RecommendationService:
         )
         keywords = search_terms_for_requirements(requirements) or ["休闲场所"]
         search_started = perf_counter()
-        discovered = await asyncio.gather(
-            *(
-                self.amap.search_nearby(
-                    keywords,
-                    longitude,
-                    latitude,
-                    radius=5_000 if requirements.preferred_area_text else 15_000,
-                    limit=10,
-                )
-                for longitude, latitude in seeds
-            ),
-            return_exceptions=True,
-        )
-        unique_places: dict[str, PoiPlace] = {}
-        for result in discovered:
-            if isinstance(result, Exception):
-                continue
-            for place in result:
-                unique_places.setdefault(place.poi_id, place)
+        available_places = await self._discover_available(requirements, seeds, keywords)
 
-        if not unique_places:
-            raise RecommendationError("候选区域附近没有找到符合需求的真实场所")
-
-        available_places: list[PoiPlace] = []
-        for place in unique_places.values():
-            if (
-                requirements.preferred_area_longitude is not None
-                and requirements.preferred_area_latitude is not None
-                and haversine_km(
-                    requirements.preferred_area_latitude,
-                    requirements.preferred_area_longitude,
-                    place.latitude,
-                    place.longitude,
-                ) > 5
+        if self.semantic_reviewer:
+            review_started = perf_counter()
+            review_input = sorted(
+                available_places,
+                key=lambda place: (-venue_fit_score(place, requirements), -(place.map_rating or 0)),
+            )[:12]
+            review = await self.semantic_reviewer.review_candidate_semantics(requirements, review_input)
+            if review.revised_search_keywords and (
+                not review.acceptable or review.rejected_poi_ids
             ):
-                continue
-            place.opening_verified = verify_open_for_visit(
-                place.opening_hours,
-                requirements.meeting_time,
-            )
-            if place.opening_hours and place.opening_verified is not True:
-                continue
-            available_places.append(place)
-        if not available_places:
-            raise RecommendationError("找到了候选地点，但没有能够确认在计划到达后仍营业的地点")
+                requirements.search_keywords = review.revised_search_keywords
+                if review.revised_target_place_kinds:
+                    requirements.target_place_kinds = review.revised_target_place_kinds
+                keywords = search_terms_for_requirements(requirements)
+                available_places = await self._discover_available(requirements, seeds, keywords)
+            elif review.rejected_poi_ids:
+                rejected = set(review.rejected_poi_ids)
+                available_places = [place for place in available_places if place.poi_id not in rejected]
+                if not available_places:
+                    raise RecommendationError("语义复核剔除了全部跑题候选，请换一种活动描述后再试")
+            _record_timing(timings_ms, "候选语义复核", review_started)
 
         center = seeds[0]
         if self.atmosphere and self.atmosphere.is_needed(requirements):
@@ -138,9 +123,8 @@ class RecommendationService:
             for place in available_places
         ]
         suitable_places = [item for item in fitted_places if item[0] >= 0.15]
-        category_is_locked = any("咖啡" in keyword for keyword in requirements.search_keywords)
-        if not suitable_places and category_is_locked:
-            raise RecommendationError("附近没有找到符合要求的咖啡馆，不会用餐厅或其他品类代替")
+        if not suitable_places and requirements.target_place_kinds:
+            raise RecommendationError("附近没有找到符合主要活动和场所形态的候选，不会用其他品类替代")
         suitable_places = suitable_places or fitted_places
         shortlist = [
             place
@@ -181,6 +165,55 @@ class RecommendationService:
                 item.warnings.append("没有候选点完全满足默认硬限制，以下为相对更公平的备选")
         _record_timing(timings_ms, "天气与评分", weather_started)
         return ranked[:3]
+
+    async def _discover_available(
+        self,
+        requirements: MeetingRequirements,
+        seeds: list[tuple[float, float]],
+        keywords: list[str],
+    ) -> list[PoiPlace]:
+        discovered = await asyncio.gather(
+            *(
+                self.amap.search_nearby(
+                    keywords,
+                    longitude,
+                    latitude,
+                    radius=5_000 if requirements.preferred_area_text else 15_000,
+                    limit=10,
+                )
+                for longitude, latitude in seeds
+            ),
+            return_exceptions=True,
+        )
+        unique_places: dict[str, PoiPlace] = {}
+        for result in discovered:
+            if isinstance(result, Exception):
+                continue
+            for place in result:
+                unique_places.setdefault(place.poi_id, place)
+        if not unique_places:
+            raise RecommendationError("候选区域附近没有找到符合需求的真实场所")
+
+        available_places: list[PoiPlace] = []
+        for place in unique_places.values():
+            if (
+                requirements.preferred_area_longitude is not None
+                and requirements.preferred_area_latitude is not None
+                and haversine_km(
+                    requirements.preferred_area_latitude,
+                    requirements.preferred_area_longitude,
+                    place.latitude,
+                    place.longitude,
+                ) > 5
+            ):
+                continue
+            place.opening_verified = verify_open_for_visit(place.opening_hours, requirements.meeting_time)
+            if place.opening_hours and place.opening_verified is not True:
+                continue
+            available_places.append(place)
+        if not available_places:
+            raise RecommendationError("找到了候选地点，但没有能够确认在计划到达后仍营业的地点")
+        return available_places
 
     async def _build_candidate(
         self,

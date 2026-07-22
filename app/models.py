@@ -16,6 +16,19 @@ class MeetingMode(StrEnum):
     INTERCITY = "intercity"
 
 
+class ActivityCategory(StrEnum):
+    CAFE = "cafe"
+    DINING = "dining"
+    DRINKS = "drinks"
+    EXHIBITION = "exhibition"
+    STREET_WALK = "street_walk"
+    PARK_WALK = "park_walk"
+    SHOPPING = "shopping"
+    SIGHTSEEING = "sightseeing"
+    CONVERSATION = "conversation"
+    OTHER = "other"
+
+
 class SessionPhase(StrEnum):
     COLLECTING = "collecting"
     CONFIRMING_ORIGINS = "confirming_origins"
@@ -42,6 +55,8 @@ class MeetingRequirements(BaseModel):
     meeting_time: datetime | None = None
     meeting_time_text: str | None = None
     activity: str | None = None
+    activity_category: ActivityCategory | None = None
+    target_place_kinds: list[Literal["venue", "park", "district", "attraction"]] = Field(default_factory=list)
     atmosphere: list[str] = Field(default_factory=list)
     constraints: list[str] = Field(default_factory=list)
     search_keywords: list[str] = Field(default_factory=list)
@@ -201,10 +216,13 @@ class CreateSessionResponse(BaseModel):
 
 class ExtractionResult(BaseModel):
     intent: Literal["update", "confirm_origins", "accept", "restart"] = "update"
+    request_scope: Literal["replace", "change_activity", "refine"] | None = None
     participants: list[Participant] | None = None
     meeting_time: datetime | None = None
     meeting_time_text: str | None = None
     activity: str | None = None
+    activity_category: ActivityCategory | None = None
+    target_place_kinds: list[Literal["venue", "park", "district", "attraction"]] | None = None
     atmosphere: list[str] | None = None
     constraints: list[str] | None = None
     search_keywords: list[str] | None = None
@@ -237,3 +255,11 @@ class VenueProfileAssessment(BaseModel):
 
 class VenueProfileBatch(BaseModel):
     profiles: list[VenueProfileAssessment] = Field(default_factory=list)
+
+
+class CandidateSemanticReview(BaseModel):
+    acceptable: bool = True
+    reason: str = ""
+    rejected_poi_ids: list[str] = Field(default_factory=list)
+    revised_search_keywords: list[str] = Field(default_factory=list, max_length=4)
+    revised_target_place_kinds: list[Literal["venue", "park", "district", "attraction"]] = Field(default_factory=list)

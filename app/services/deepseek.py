@@ -7,6 +7,8 @@ import httpx
 from pydantic import ValidationError
 
 from app.models import (
+    ActivityCategory,
+    CandidateSemanticReview,
     CandidatePlace,
     ConversationMessage,
     ExtractionResult,
@@ -24,18 +26,21 @@ class DeepSeekError(RuntimeError):
 
 
 EXTRACTION_SYSTEM_PROMPT = """
-你是多人约会规划产品的需求接待员，只理解和整理信息，不推荐地点、不计算距离。只输出有效 JSON，不使用 Markdown。
+你是多人约会规划产品的语义规划员。你负责理解需求、判断对话意图并制定搜索计划；不推荐具体地点、不计算距离。只输出有效 JSON，不使用 Markdown。
 规则：
-1. participants 若出现，必须是合并新消息后的完整 2～4 人列表；name 和 origin_text 必须为字符串，不能为 null。“我从/我在”对应 name“我”。
-2. transport_mode 只允许 transit、driving 或 null。
-3. 相对日期转为 +08:00 ISO 8601。模糊时段默认：凌晨01:00、早上09:00、上午10:00、中午12:00、下午14:00、傍晚18:00、晚上19:00、夜间20:00，不追问几点。
-4. search_keywords 给 1～3 个高德可搜索的具体品类词，不写形容词。明确场所类型不可被氛围替换，例如咖啡馆不能改成艺术馆。
-5. “照顾某人/离某人近些”：priority=favor_person，并填写 favored_participant。
-6. “在某地附近/靠近某商圈或车站/明确去某座城市见面”：preferred_area_text 只填目标地名，priority=location_first；这不同于照顾参与者。
-7. intent 只允许 update、confirm_origins、accept、restart。未知信息填 null，不猜地址、时间、交通方式。
-8. “第一个/第二个”必须按候选序号理解。question 仅在缺关键信息时填写，且只问一个问题。
-9. mode=intercity 表示邻城模式，但你仍只抽取需求；不要自行选择见面城市或中间城市。
-返回字段：intent, participants, meeting_time, meeting_time_text, activity, atmosphere, constraints, search_keywords, priority, favored_participant, preferred_area_text, question。
+1. request_scope：用户重新完整说明参与者、地点、时间和主要活动时为 replace；只明确更换主要活动时为 change_activity；只调整安静程度、价格、换乘、照顾对象等为 refine。完整新需求不得继承旧活动品类。
+2. participants 若出现，必须是合并新消息后的完整 2～4 人列表；name 和 origin_text 必须为字符串，不能为 null。“我从/我在”对应 name“我”。
+3. transport_mode 只允许 transit、driving 或 null。
+4. 相对日期转为 +08:00 ISO 8601。模糊时段默认：凌晨01:00、早上09:00、上午10:00、中午12:00、下午14:00、傍晚18:00、晚上19:00、夜间20:00，不追问几点。
+5. activity_category 只允许 cafe、dining、drinks、exhibition、street_walk、park_walk、shopping、sightseeing、conversation、other。
+6. target_place_kinds 从 venue、park、district、attraction 中选择。它描述主要推荐对象：街区漫游通常为 district/attraction，咖啡或餐饮为 venue；辅助休息点不能替代主要对象。
+7. search_keywords 给 1～4 个高德可搜索的对象品类，不写形容词。它必须与 activity_category 和 target_place_kinds 一致。
+8. “照顾某人/离某人近些”：priority=favor_person，并填写 favored_participant。
+9. “在某地附近/靠近某商圈或车站/明确去某座城市见面”：preferred_area_text 只填目标地名，priority=location_first；这不同于照顾参与者。
+10. intent 只允许 update、confirm_origins、accept、restart。未知信息填 null，不猜地址、时间、交通方式。
+11. “第一个/第二个”必须按候选序号理解。question 仅在缺关键信息时填写，且只问一个问题。
+12. mode=intercity 表示邻城模式，但你仍只抽取需求；不要自行选择见面城市或中间城市。
+返回字段：intent, request_scope, participants, meeting_time, meeting_time_text, activity, activity_category, target_place_kinds, atmosphere, constraints, search_keywords, priority, favored_participant, preferred_area_text, question。
 """.strip()
 
 
@@ -91,6 +96,8 @@ class DeepSeekService:
             "meeting_time": current.meeting_time.isoformat() if current.meeting_time else None,
             "meeting_time_text": current.meeting_time_text,
             "activity": current.activity,
+            "activity_category": current.activity_category,
+            "target_place_kinds": current.target_place_kinds,
             "atmosphere": current.atmosphere,
             "constraints": current.constraints,
             "search_keywords": current.search_keywords,
@@ -173,6 +180,61 @@ class DeepSeekService:
             f"需求理解暂时失败（已自动尝试 {self.extraction_attempts} 次）：{last_error}。"
             "当前会话没有被修改，无需重新开始，请直接再发送一次。"
         )
+
+    async def review_candidate_semantics(
+        self,
+        requirements: MeetingRequirements,
+        places: list[PoiPlace],
+    ) -> CandidateSemanticReview:
+        """Allow one bounded semantic reflection before expensive route calls."""
+
+        compact_places = [
+            {
+                "poi_id": place.poi_id,
+                "name": place.name,
+                "address": place.address,
+                "type": place.type_name,
+                "place_kind": place.place_kind,
+            }
+            for place in places[:12]
+        ]
+        prompt = f"""
+用户语义计划：{json.dumps({
+    "activity": requirements.activity,
+    "activity_category": requirements.activity_category,
+    "target_place_kinds": requirements.target_place_kinds,
+    "atmosphere": requirements.atmosphere,
+    "constraints": requirements.constraints,
+    "search_keywords": requirements.search_keywords,
+}, ensure_ascii=False, default=str)}
+地图候选：{json.dumps(compact_places, ensure_ascii=False)}
+
+只检查候选整体是否符合主要活动与主要场所形态，不评价交通、营业时间或真实性。
+将个别明显跑题候选的 poi_id 原样放入 rejected_poi_ids。如果 rejected_poi_ids 非空，也必须给出1～4个更合适、可用于补足候选的高德对象品类词及目标场所形态。如果大多数候选明显跑题，acceptable=false；否则 acceptable=true。
+咖啡馆等辅助休息点不能替代用户要求的街区、公园或展览。
+返回 JSON：{{"acceptable":true,"reason":"一句话","rejected_poi_ids":[],"revised_search_keywords":[],"revised_target_place_kinds":[]}}
+""".strip()
+        try:
+            response = await self.client.post(
+                self.ENDPOINT,
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                json={
+                    "model": self.profile_model,
+                    "messages": [
+                        {"role": "system", "content": "你是候选语义审查员，只输出有效 JSON，不得发明地点或修改地图事实。"},
+                        {"role": "user", "content": prompt},
+                    ],
+                    "response_format": {"type": "json_object"},
+                    "thinking": {"type": "disabled"},
+                    "temperature": 0.1,
+                    "max_tokens": 500,
+                },
+            )
+            response.raise_for_status()
+            content = response.json()["choices"][0]["message"]["content"]
+            return CandidateSemanticReview.model_validate_json(content)
+        except (httpx.HTTPError, KeyError, IndexError, ValueError, ValidationError):
+            return CandidateSemanticReview(acceptable=True, reason="语义复核不可用，保留程序筛选结果")
 
     async def build_venue_profiles(
         self,
@@ -313,6 +375,15 @@ def _normalize_extraction_payload(
     if not isinstance(payload, dict):
         raise ValueError("DeepSeek 返回的最外层不是 JSON 对象")
     result = dict(payload)
+    category_aliases = {
+        "咖啡": "cafe", "餐饮": "dining", "吃饭": "dining", "酒吧": "drinks",
+        "展览": "exhibition", "看展": "exhibition", "街区": "street_walk",
+        "公园": "park_walk", "购物": "shopping", "景点": "sightseeing", "聊天": "conversation",
+    }
+    if result.get("activity_category") in category_aliases:
+        result["activity_category"] = category_aliases[result["activity_category"]]
+    if isinstance(result.get("target_place_kinds"), str):
+        result["target_place_kinds"] = [result["target_place_kinds"]]
     participants = result.get("participants")
     if isinstance(participants, list):
         global_transport_mode = _global_transport_mode(user_message)
@@ -365,6 +436,11 @@ def _normalize_extraction_payload(
     _apply_fuzzy_time_default(result, current, user_message, now or datetime.now().astimezone())
     if result.get("preferred_area_text"):
         result["priority"] = "location_first"
+    if result.get("request_scope") not in ("replace", "change_activity", "refine"):
+        has_full_people = isinstance(result.get("participants"), list) and len(result["participants"]) >= 2
+        has_new_activity = bool(result.get("activity") or result.get("activity_category"))
+        has_new_time = bool(result.get("meeting_time") or result.get("meeting_time_text"))
+        result["request_scope"] = "replace" if has_full_people and has_new_activity and has_new_time else "refine"
     return result
 
 

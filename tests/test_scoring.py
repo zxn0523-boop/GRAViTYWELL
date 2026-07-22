@@ -2,6 +2,7 @@ from datetime import datetime
 
 from app.core.scoring import score_candidate
 from app.models import (
+    ActivityCategory,
     CandidatePlace,
     MeetingRequirements,
     Participant,
@@ -175,6 +176,9 @@ def test_favor_person_adds_a_search_seed_near_that_person() -> None:
 def test_walking_request_expands_to_parks_and_districts() -> None:
     req = requirements()
     req.activity = "散步聊天"
+    req.activity_category = ActivityCategory.PARK_WALK
+    req.search_keywords = []
+    req.target_place_kinds = []
     req.atmosphere = ["自然", "适合拍照"]
     terms = search_terms_for_requirements(req)
     assert "公园" in terms
@@ -186,10 +190,36 @@ def test_design_atmosphere_does_not_replace_explicit_cafe_category() -> None:
     req = requirements()
     req.activity = "聊天"
     req.atmosphere = ["有设计感", "安静"]
+    req.activity_category = ActivityCategory.CAFE
     req.search_keywords = ["咖啡馆", "艺术空间"]
     terms = search_terms_for_requirements(req)
     assert all("咖啡" in term for term in terms)
     assert "艺术空间" not in terms
+
+
+def test_street_plan_rejects_cafe_even_if_name_mentions_history() -> None:
+    req = requirements()
+    req.activity = "逛有历史感的街区"
+    req.activity_category = ActivityCategory.STREET_WALK
+    req.target_place_kinds = ["district", "attraction"]
+    req.search_keywords = ["历史文化街区"]
+    cafe = PoiPlace(
+        poi_id="cafe",
+        name="老上海历史主题咖啡馆",
+        address="街区旁",
+        longitude=121.4,
+        latitude=31.2,
+        type_name="咖啡厅",
+        place_kind="venue",
+    )
+    assert venue_fit_score(cafe, req) == 0
+
+
+def test_shop_inside_walking_street_is_still_a_venue() -> None:
+    assert infer_place_kind(
+        "老街丝绸(七宝镇步行街店)",
+        "购物服务;专卖店;专营店",
+    ) == "venue"
 
 
 def test_map_rating_affects_otherwise_equal_candidates() -> None:

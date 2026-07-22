@@ -38,6 +38,72 @@ async def test_build_venue_profiles_uses_one_grounded_json_call() -> None:
     await client.aclose()
 
 
+async def test_complete_brief_gets_semantic_search_plan() -> None:
+    model_output = {
+        "intent": "update",
+        "request_scope": "replace",
+        "participants": [
+            {"name": "我", "origin_text": "静安寺", "transport_mode": "transit"},
+            {"name": "小李", "origin_text": "松江大学城", "transport_mode": "transit"},
+        ],
+        "meeting_time": "2026-07-26T13:00:00+08:00",
+        "meeting_time_text": "本周日下午一点",
+        "activity": "逛有历史感的街区",
+        "activity_category": "street_walk",
+        "target_place_kinds": ["district", "attraction"],
+        "atmosphere": ["有历史感"],
+        "search_keywords": ["历史文化街区", "特色街区"],
+    }
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": json.dumps(model_output, ensure_ascii=False)}}]},
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    service = DeepSeekService("test", "test", client=client)
+    result = await service.extract_requirements(
+        MeetingRequirements(activity="喝咖啡", activity_category="cafe", search_keywords=["咖啡馆"]),
+        "我在静安寺，小李在松江大学城，本周日下午一点都坐公共交通，想逛逛有历史感的街区。",
+    )
+    assert result.request_scope == "replace"
+    assert result.activity_category == "street_walk"
+    assert result.target_place_kinds == ["district", "attraction"]
+    await client.aclose()
+
+
+async def test_candidate_semantic_review_can_request_one_research() -> None:
+    from app.models import PoiPlace
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = request.content.decode("utf-8")
+        assert "瑞幸咖啡" in body
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": json.dumps({
+                "acceptable": False,
+                "reason": "咖啡馆不能替代街区",
+                "revised_search_keywords": ["历史文化街区", "特色街区"],
+                "revised_target_place_kinds": ["district", "attraction"],
+            }, ensure_ascii=False)}}]},
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    service = DeepSeekService("test", "test", client=client)
+    review = await service.review_candidate_semantics(
+        MeetingRequirements(
+            activity="逛历史街区",
+            activity_category="street_walk",
+            target_place_kinds=["district", "attraction"],
+        ),
+        [PoiPlace(poi_id="cafe", name="瑞幸咖啡", longitude=1, latitude=1, type_name="咖啡厅")],
+    )
+    assert review.acceptable is False
+    assert review.revised_target_place_kinds == ["district", "attraction"]
+    await client.aclose()
+
+
 async def test_null_participant_name_is_recovered_from_user_message() -> None:
     model_output = {
         "intent": "update",
